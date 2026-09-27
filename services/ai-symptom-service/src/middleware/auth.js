@@ -1,7 +1,8 @@
 const jwt = require('jsonwebtoken');
 const env = require('../config/env');
+const { pool } = require('../db/pool');
 
-function verifyToken(req, res, next) {
+async function verifyToken(req, res, next) {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.startsWith('Bearer ')
     ? authHeader.slice(7)
@@ -11,12 +12,25 @@ function verifyToken(req, res, next) {
     return res.status(401).json({ error: 'No token provided' });
   }
 
+  let decoded;
   try {
-    req.user = jwt.verify(token, env.jwtSecret);
-    return next();
+    decoded = jwt.verify(token, env.jwtSecret);
   } catch (error) {
     return res.status(403).json({ error: 'Invalid token' });
   }
+
+  // Session revocation: suspended or deleted accounts lose access immediately.
+  try {
+    const result = await pool.query('SELECT status FROM users WHERE id = $1', [decoded.id]);
+    if (result.rows.length === 0 || result.rows[0].status !== 'active') {
+      return res.status(401).json({ error: 'Session no longer valid' });
+    }
+  } catch (error) {
+    return res.status(503).json({ error: 'Service unavailable' });
+  }
+
+  req.user = decoded;
+  return next();
 }
 
 function requireRole(...allowedRoles) {

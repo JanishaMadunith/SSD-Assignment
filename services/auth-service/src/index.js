@@ -25,23 +25,47 @@ const pool = new Pool({
   database: process.env.DB_NAME || 'healthcare',
 });
 
+// Without this, an idle connection dropped by Postgres crashes the process
+// instead of letting the session check fail closed with 503.
+pool.on('error', (error) => {
+  console.error('postgres pool error:', error.message);
+});
+
 const allowedRoles = new Set(['patient', 'doctor', 'admin']);
 const allowedStatuses = new Set(['active', 'suspended', 'deleted']);
 
-function verifyToken(req, res, next) {
+// Session revocation: returns true only while the account is still active.
+async function isUserActive(userId) {
+  const result = await pool.query('SELECT status FROM users WHERE id = $1', [userId]);
+  return result.rows.length > 0 && result.rows[0].status === 'active';
+}
+
+async function verifyToken(req, res, next) {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.split(' ')[1];
   if (!token) {
     return res.status(401).json({ message: 'No token provided' });
   }
 
+  let decoded;
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
-    return next();
+    decoded = jwt.verify(token, JWT_SECRET);
   } catch (_error) {
     return res.status(403).json({ message: 'Invalid token' });
   }
+
+  try {
+    if (!(await isUserActive(decoded.id))) {
+      return res.status(401).json({ message: 'Session no longer valid' });
+    }
+  } catch (error) {
+    // Fail closed: if the status cannot be checked, do not let the request through.
+    console.error('session status lookup failed:', error.message);
+    return res.status(503).json({ message: 'Service unavailable' });
+  }
+
+  req.user = decoded;
+  return next();
 }
 
 function requireRole(...roles) {
@@ -178,7 +202,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const result = await pool.query(
-      'SELECT id, email, password_hash, role FROM users WHERE email = $1',
+      'SELECT id, email, password_hash, role, status FROM users WHERE email = $1',
       [email.toLowerCase()]
     );
 
@@ -191,6 +215,11 @@ app.post('/api/auth/login', async (req, res) => {
 
     if (!isValid) {
       return res.status(401).json({ message: 'invalid credentials' });
+    }
+
+    // Suspended or deleted accounts must not be issued a new token.
+    if (user.status !== 'active') {
+      return res.status(403).json({ message: 'account is not active' });
     }
 
     const token = jwt.sign(
@@ -218,12 +247,23 @@ app.get('/api/auth/verify', async (req, res) => {
     return res.status(401).json({ valid: false, message: 'missing token' });
   }
 
+  let decoded;
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    res.json({ valid: true, user: decoded });
+    decoded = jwt.verify(token, JWT_SECRET);
   } catch (error) {
-    res.status(401).json({ valid: false, message: 'invalid token' });
+    return res.status(401).json({ valid: false, message: 'invalid token' });
   }
+
+  try {
+    if (!(await isUserActive(decoded.id))) {
+      return res.status(401).json({ valid: false, message: 'session no longer valid' });
+    }
+  } catch (error) {
+    console.error('session status lookup failed:', error.message);
+    return res.status(503).json({ valid: false, message: 'service unavailable' });
+  }
+
+  return res.json({ valid: true, user: decoded });
 });
 
 // Admin: list users
