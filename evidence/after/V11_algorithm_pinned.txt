@@ -1,0 +1,32 @@
+=== AFTER: V11 - JWT Algorithm Pinning Applied ===
+
+Remediation:
+Pinned algorithm to ['HS256'] across all JWT verification points and explicitly specified HS256 on signing:
+
+  // shared/middleware/auth.js:43
+  decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+
+  // services/auth-service/src/index.js:58
+  decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
+
+  // services/auth-service/src/index.js:259
+  decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
+
+  // services/ai-symptom-service/src/middleware/auth.js:18
+  decoded = jwt.verify(token, env.jwtSecret, { algorithms: ['HS256'] });
+
+  // services/auth-service/src/index.js:186, 233
+  jwt.sign(payload, JWT_SECRET, { algorithm: 'HS256', expiresIn: JWT_EXPIRES_IN });
+
+Test Results (node --test tests/jwt-algorithm.test.js):
+  ✔ HS256 token is accepted when algorithm is pinned to HS256 (17.9ms)
+  ✔ alg: none token is rejected by jwt.verify (1.1ms)
+  ✔ HS384 token is rejected when algorithm is pinned to HS256 (0.3ms)
+  ✔ HS512 token is rejected when algorithm is pinned to HS256 (0.1ms)
+  ✔ all verifier files include algorithms pinning { algorithms: ['HS256'] } (2.6ms)
+
+Verification Summary:
+  ✓ An alg:none token is strictly rejected.
+  ✓ Tokens with mismatched HMAC algorithms (e.g. HS384, HS512) are strictly rejected with "invalid algorithm".
+  ✓ Legitimate HS256 tokens are accepted and decoded as expected.
+  ✓ All verifiers enforce explicit algorithm pinning.
