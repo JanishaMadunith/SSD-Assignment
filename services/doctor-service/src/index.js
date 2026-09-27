@@ -11,7 +11,12 @@ const adminRouter = require('./routes/admin');
 
 const app = express();
 
-app.use(cors());
+// Only the configured frontend origin(s) may call this API from a browser.
+const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:3000')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+app.use(cors({ origin: allowedOrigins, credentials: false }));
 app.use(express.json());
 
 app.get('/health', (req, res) => {
@@ -28,8 +33,18 @@ app.use('/api/doctors', availabilityRouter);
 app.use('/api/doctors', appointmentsRouter);
 app.use('/api/doctors', prescriptionsRouter);
 
+// Deliberate 4xx messages are returned to the client; internal errors never are.
 app.use((err, req, res, next) => {
-  return res.status(500).json({ error: err.message || 'Server error' });
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Malformed JSON body' });
+  }
+
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Request body too large' });
+  }
+
+  console.error('[DoctorService] Unhandled error:', err);
+  return res.status(500).json({ error: 'Internal server error' });
 });
 
 const PORT = process.env.PORT || 3002;

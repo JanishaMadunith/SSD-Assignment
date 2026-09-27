@@ -1,0 +1,21 @@
+=== AFTER: Federated Identity (OIDC) - Google OpenID Connect Implementation ===
+
+Architecture & Security Properties:
+1. Grant Type: Authorization Code Flow with PKCE (S256).
+2. Certified Library: Uses `openid-client` for server-side token exchange and JWKS cryptographic validation.
+3. Client Secret Isolation: GOOGLE_CLIENT_SECRET remains server-side only in auth-service; never exposed in the browser bundle.
+4. Immutable Subject ID Binding: Users are matched and mapped on immutable `claims.sub` (`google_sub`), never on email alone.
+5. V01 Access Control Preservation: First-time Google sign-ins strictly provision `role: 'patient'` (never 'admin').
+6. V05 Session Revocation Inheritance: Accounts with non-active status (suspended/deleted) are refused platform JWT tokens.
+7. V04 & V11 Token Crypto Inheritance: Platform JWT tokens are signed and verified with high-entropy pinned `HS256`.
+8. CSRF Protection: `state` and `nonce` parameters are validated both in frontend sessionStorage and server-side.
+
+Test Matrix Results (node --test tests/oidc-login.test.js):
+  ✔ Scenario 1: Active user Google sign-in returns 200 and platform JWT (8.9ms)
+  ✔ Scenario 2: First-time Google sign-in provisions new patient account (never admin) (0.3ms)
+  ✔ Scenario 3: Google account with email_verified: false is rejected with 401 (0.1ms)
+  ✔ Scenario 4: Suspended account sign-in is rejected with 401 (V05 inheritance) (0.1ms)
+  ✔ Scenario 5: Tampered state parameter on callback is rejected with 400 (CSRF prevention) (0.1ms)
+  ✔ Scenario 6: Replayed authorization code is rejected with 400 (0.1ms)
+
+Total Tests: 6 passed, 0 failed.

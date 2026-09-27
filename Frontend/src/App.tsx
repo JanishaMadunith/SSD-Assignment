@@ -20,9 +20,11 @@ import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router-dom
 import { Link } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth, UserRole } from './context/AuthContext';
+import { initiateGoogleLogin } from './utils/pkce';
 import Layout from './components/Layout/Layout';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import AuthCallback from './pages/AuthCallback';
 import PatientDashboard from './pages/patient/Dashboard';
 import SearchDoctors from './pages/patient/SearchDoctors';
 import PatientAppointments from './pages/patient/Appointments';
@@ -280,7 +282,7 @@ function LandingPage() {
                 {React.createElement(FaApple as any, { className: 'h-5 w-5' })}
                 Continue with Apple
               </button>
-              <button className="signin-social-btn" type="button">
+              <button className="signin-social-btn" type="button" onClick={() => initiateGoogleLogin()}>
                 {React.createElement(FcGoogle as any, { className: 'h-5 w-5' })}
                 Continue with Google
               </button>
@@ -397,6 +399,7 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/doctor/register" element={<DoctorApplication />} />
+          <Route path="/auth/callback" element={<AuthCallback />} />
 
           <Route element={<ProtectedRoute allowedRoles={['patient']} />}>
             <Route path="/patient/appointments/:id" element={<AppointmentSummary />} />

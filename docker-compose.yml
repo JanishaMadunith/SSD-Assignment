@@ -16,10 +16,12 @@ services:
       - ai-symptom-service
 
   auth-service:
-    build: ./services/auth-service
+    build:
+      context: .
+      dockerfile: services/auth-service/Dockerfile
     env_file: ./services/auth-service/.env
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     depends_on:
       - postgres
       - redis
@@ -29,8 +31,8 @@ services:
       context: .
       dockerfile: services/patient-service/Dockerfile
     env_file: ./services/patient-service/.env
-    ports:
-      - "3001:3001"
+    expose:
+      - "3001"
     depends_on:
       - postgres
       - mongo
@@ -40,8 +42,8 @@ services:
       context: .
       dockerfile: services/doctor-service/Dockerfile
     env_file: ./services/doctor-service/.env
-    ports:
-      - "3002:3002"
+    expose:
+      - "3002"
     depends_on:
       - postgres
 
@@ -50,8 +52,8 @@ services:
       context: .
       dockerfile: services/appointment-service/Dockerfile
     env_file: ./services/appointment-service/.env
-    ports:
-      - "3003:3003"
+    expose:
+      - "3003"
     depends_on:
       - postgres
       - rabbitmq
@@ -61,8 +63,8 @@ services:
       context: .
       dockerfile: services/telemedicine-service/Dockerfile
     env_file: ./services/telemedicine-service/.env
-    ports:
-      - "3004:3004"
+    expose:
+      - "3004"
     depends_on:
       - postgres
 
@@ -71,8 +73,8 @@ services:
       context: .
       dockerfile: services/payment-service/Dockerfile
     env_file: ./services/payment-service/.env
-    ports:
-      - "3005:3005"
+    expose:
+      - "3005"
     depends_on:
       - postgres
       - rabbitmq
@@ -82,8 +84,8 @@ services:
       context: .
       dockerfile: services/notification-service/Dockerfile
     env_file: ./services/notification-service/.env
-    ports:
-      - "3006:3006"
+    expose:
+      - "3006"
     depends_on:
       - rabbitmq
 
@@ -92,8 +94,8 @@ services:
       context: .
       dockerfile: services/ai-symptom-service/Dockerfile
     env_file: ./services/ai-symptom-service/.env
-    ports:
-      - "3007:3007"
+    expose:
+      - "3007"
     depends_on:
       - postgres
       - ollama
@@ -105,8 +107,8 @@ services:
   
   ollama:
     image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
+    expose:
+      - "11434"
     volumes:
       - ollama_data:/root/.ollama
     command: serve
@@ -122,8 +124,8 @@ services:
 
   whisper:
     image: hwdsl2/whisper-server:latest
-    ports:
-      - "9001:9000"
+    expose:
+      - "9000"
     environment:
       - WHISPER_MODEL=base
       - WHISPER_LANGUAGE=en
@@ -143,8 +145,8 @@ services:
     build:
       context: .
       dockerfile: services/tts-service/Dockerfile
-    ports:
-      - "5002:5002"
+    expose:
+      - "5002"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5002/health"]
       interval: 30s
@@ -153,10 +155,12 @@ services:
 
   livekit:
     image: livekit/livekit-server:latest
-    ports:
-      - "7880:7880"   # WebSocket for WebRTC
-      - "7881:7881"   # HTTP API
+    command: --dev
+    expose:
+      - "7880"
+      - "7881"
     environment:
+      - 'LIVEKIT_KEYS=telemedicine_key: telemedicine_secret'
       - LIVEKIT_API_KEY=telemedicine_key
       - LIVEKIT_API_SECRET=telemedicine_secret
     healthcheck:
@@ -176,8 +180,8 @@ services:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: secret
       POSTGRES_DB: healthcare
-    ports:
-      - "5432:5432"
+    expose:
+      - "5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -188,8 +192,8 @@ services:
 
   mongo:
     image: mongo:7
-    ports:
-      - "27017:27017"
+    expose:
+      - "27017"
     volumes:
       - mongo_data:/data/db
     healthcheck:
@@ -200,8 +204,8 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    expose:
+      - "6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -210,9 +214,9 @@ services:
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
-    ports:
-      - "5672:5672"
-      - "15672:15672"
+    expose:
+      - "5672"
+      - "15672"
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 30s

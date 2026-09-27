@@ -1,0 +1,42 @@
+=== AFTER: V13 - Rate Limiting & Account Lockout Applied ===
+
+Remediation:
+1. Added `express-rate-limit` middleware (`authLimiter`) to `/api/auth/login` and `/api/auth/register`:
+   - Configured windowMs: 15 minutes, max: 10 attempts per IP.
+   - 11th attempt receives HTTP 429 Too Many Requests.
+2. Added per-account lockout in PostgreSQL schema and login handler:
+   - Tracks `failed_login_attempts` (locks account for 15 min after 5 failed attempts).
+   - Pre-bcrypt lockout check: Account lockout is evaluated BEFORE bcrypt.compare to prevent side-channel timing disclosures.
+   - Generic response message ('invalid credentials') returned for all failure modes to prevent account enumeration.
+   - Successful login resets failed attempt counter and lockout timestamp.
+
+Fixed Implementation:
+  // services/auth-service/src/index.js
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { message: 'Too many authentication attempts, please try again later' },
+  });
+
+  app.post('/api/auth/login', authLimiter, async (req, res) => {
+    ...
+    // Lockout check before bcrypt
+    const now = new Date();
+    if (user.locked_until && new Date(user.locked_until) > now) {
+      return res.status(401).json({ message: 'invalid credentials' });
+    }
+    ...
+  });
+
+Test Results (node --test tests/login-lockout.test.js):
+  ✔ auth rate limiter rejects requests exceeding 10 attempts threshold with 429 (0.5ms)
+  ✔ account locks after 5 failed attempts and refuses correct password during lockout (507ms)
+  ✔ auth-service source contains rate-limiting and pre-bcrypt lockout verification (2.3ms)
+
+Verification Summary:
+  ✓ The 11th authentication attempt in the 15-minute window is rejected with 429.
+  ✓ An account locks after 5 failed attempts and refuses even a correct password until the lockout window passes.
+  ✓ Lockout is evaluated before bcrypt.compare to mitigate timing attacks.
+  ✓ Every failure mode returns an identical 'invalid credentials' message.

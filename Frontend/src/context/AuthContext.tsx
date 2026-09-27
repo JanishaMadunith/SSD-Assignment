@@ -24,6 +24,7 @@ interface AuthContextValue {
   loading: boolean;
   login: (email: string, password: string) => Promise<AuthUser>;
   register: (data: { full_name: string; email: string; password: string; role: Exclude<UserRole, 'admin'>; }) => Promise<void>;
+  handleGoogleCallback: (payload: { code: string; code_verifier: string; state: string; nonce?: string }) => Promise<AuthUser>;
   updateUser: (updates: Partial<AuthUser>) => void;
   logout: () => void;
 }
@@ -136,6 +137,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     toast.success('Registration successful');
   }, []);
 
+  const handleGoogleCallback = useCallback(async (payload: { code: string; code_verifier: string; state: string; nonce?: string }) => {
+    const { data } = await api.post<AuthResponse>('/auth/google/callback', payload);
+    persistAuth(data);
+    return data.user;
+  }, [persistAuth]);
+
   const logout = useCallback(() => {
     clearAuth();
     toast.success('Logged out');
@@ -150,10 +157,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       loading,
       login,
       register,
+      handleGoogleCallback,
       updateUser,
       logout,
     }),
-    [loading, login, logout, register, token, updateUser, user]
+    [handleGoogleCallback, loading, login, logout, register, token, updateUser, user]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
