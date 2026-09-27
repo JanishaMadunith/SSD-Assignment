@@ -31,7 +31,9 @@ const fileFilter = (req, file, cb) => {
   ];
 
   if (!allowedTypes.includes(file.mimetype)) {
-    return cb(new Error('Only PDF, JPG, and PNG files are allowed'));
+    const error = new Error('Only PDF, JPG, and PNG files are allowed');
+    error.statusCode = 400; // a validation error, safe to show the client
+    return cb(error);
   }
 
   return cb(null, true);
