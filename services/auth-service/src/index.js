@@ -31,6 +31,28 @@ const authLimiter = rateLimit({
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3009/auth/callback';
+
+let googleClient = null;
+async function getGoogleClient() {
+  if (!googleClient) {
+    if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+      throw new Error('GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be configured');
+    }
+    const { Issuer } = require('openid-client');
+    const googleIssuer = await Issuer.discover('https://accounts.google.com');
+    googleClient = new googleIssuer.Client({
+      client_id: GOOGLE_CLIENT_ID,
+      client_secret: GOOGLE_CLIENT_SECRET,
+      redirect_uris: [GOOGLE_REDIRECT_URI],
+      response_types: ['code'],
+    });
+  }
+  return googleClient;
+}
+
 if (!JWT_SECRET) {
   throw new Error('JWT_SECRET is required in environment variables');
 }
@@ -158,6 +180,24 @@ async function ensureSchema() {
       ) THEN
         ALTER TABLE users
         ADD CONSTRAINT users_status_check CHECK (status IN ('active', 'suspended', 'deleted'));
+      END IF;
+    END $$;
+  `);
+
+  // OIDC: Google Subject ID and auth provider
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub TEXT UNIQUE;");
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT NOT NULL DEFAULT 'password';");
+
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'users_auth_provider_check'
+      ) THEN
+        ALTER TABLE users
+        ADD CONSTRAINT users_auth_provider_check CHECK (auth_provider IN ('password', 'google', 'both'));
       END IF;
     END $$;
   `);
@@ -318,6 +358,125 @@ app.get('/api/auth/verify', async (req, res) => {
   }
 
   return res.json({ valid: true, user: decoded });
+});
+
+// OIDC: Google OAuth URL generation with PKCE parameters
+app.get('/api/auth/google/url', (req, res) => {
+  if (!GOOGLE_CLIENT_ID) {
+    return res.status(500).json({ message: 'GOOGLE_CLIENT_ID is not configured' });
+  }
+  const { state, code_challenge, nonce } = req.query;
+  if (!state || !code_challenge) {
+    return res.status(400).json({ message: 'state and code_challenge are required query parameters' });
+  }
+
+  const redirectUri = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3009/auth/callback';
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: redirectUri,
+    response_type: 'code',
+    scope: 'openid email profile',
+    state: String(state),
+    code_challenge: String(code_challenge),
+    code_challenge_method: 'S256',
+    ...(nonce ? { nonce: String(nonce) } : {}),
+    access_type: 'offline',
+    prompt: 'select_account'
+  });
+
+  return res.json({
+    url: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
+  });
+});
+
+// OIDC: Server-side Google token exchange and platform JWT issuance
+app.post('/api/auth/google/callback', authLimiter, async (req, res) => {
+  try {
+    const { code, code_verifier, state, nonce } = req.body;
+    if (!code || !code_verifier || !state) {
+      return res.status(400).json({ message: 'code, code_verifier, and state are required' });
+    }
+
+    const redirectUri = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3009/auth/callback';
+    const client = await getGoogleClient();
+
+    // 1. Exchange the code SERVER-SIDE — the client secret never reaches the browser.
+    const tokenSet = await client.callback(
+      redirectUri,
+      { code, state },
+      { code_verifier, nonce, state }
+    );
+
+    const claims = tokenSet.claims();
+
+    // 2. Verify: openid-client checks signature/iss/aud/exp; we verify email_verified:
+    if (!claims.email_verified) {
+      return res.status(401).json({ message: 'Google account email is not verified' });
+    }
+
+    // 3. Find or create user on google_sub (NEVER auto-grant admin to preserve V01).
+    let userResult = await pool.query(
+      'SELECT id, email, role, status, google_sub, auth_provider FROM users WHERE google_sub = $1',
+      [claims.sub]
+    );
+
+    let user = userResult.rows[0];
+
+    if (!user) {
+      // Check if existing user exists with the same email
+      const emailResult = await pool.query(
+        'SELECT id, email, role, status, google_sub, auth_provider FROM users WHERE email = $1',
+        [claims.email.toLowerCase()]
+      );
+
+      if (emailResult.rows.length > 0) {
+        // Link google_sub to existing account
+        user = emailResult.rows[0];
+        await pool.query(
+          "UPDATE users SET google_sub = $1, auth_provider = 'both' WHERE id = $2",
+          [claims.sub, user.id]
+        );
+      } else {
+        // Create new patient (strictly 'patient', never 'admin' - preserves V01)
+        const createResult = await pool.query(
+          `INSERT INTO users (email, password_hash, role, full_name, google_sub, auth_provider, status)
+           VALUES ($1, $2, 'patient', $3, $4, 'google', 'active')
+           RETURNING id, email, role, status, google_sub, auth_provider`,
+          [
+            claims.email.toLowerCase(),
+            'OIDC_FEDERATED_NO_PASSWORD',
+            claims.name || claims.email.split('@')[0],
+            claims.sub
+          ]
+        );
+        user = createResult.rows[0];
+      }
+    }
+
+    // 4. Inherit V05: reject if the account is not active.
+    if (user.status !== 'active') {
+      return res.status(401).json({ message: 'Account inactive' });
+    }
+
+    // 5. Issue platform JWT exactly as the password path does (inherits V04 & V11).
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role },
+      JWT_SECRET,
+      { algorithm: 'HS256', expiresIn: JWT_EXPIRES_IN }
+    );
+
+    return res.json({
+      message: 'Google authentication successful',
+      token,
+      user: { id: user.id, email: user.email, role: user.role }
+    });
+  } catch (error) {
+    console.error('Google callback error:', error.message);
+    if (error.name === 'RPError' || error.name === 'OPError') {
+      return res.status(400).json({ message: error.message || 'Google token exchange failed' });
+    }
+    return res.status(500).json({ message: 'internal server error' });
+  }
 });
 
 // Admin: list users
