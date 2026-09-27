@@ -169,6 +169,25 @@ router.delete('/reports/:id', verifyToken, requireRole('patient'), async (req, r
 
 router.get('/:id/reports', verifyToken, requireRole('doctor', 'admin'), async (req, res) => {
   try {
+    if (req.user.role === 'doctor') {
+      const relationshipResult = await pool.query(
+        `
+          SELECT 1
+          FROM appointments a
+          JOIN doctors d ON d.id = a.doctor_id
+          JOIN patients p ON p.user_id = a.patient_id
+          WHERE d.user_id = $1
+            AND p.id = $2
+          LIMIT 1
+        `,
+        [req.user.id, req.params.id]
+      );
+
+      if (relationshipResult.rows.length === 0) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+    }
+
     const reportsResult = await pool.query(
       `
         SELECT *

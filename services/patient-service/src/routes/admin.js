@@ -34,6 +34,24 @@ router.get('/:id', verifyToken, requireRole('admin', 'doctor'), async (req, res)
 
     const patient = patientResult.rows[0];
 
+    if (req.user.role === 'doctor') {
+      const relationshipResult = await pool.query(
+        `
+          SELECT 1
+          FROM appointments a
+          JOIN doctors d ON d.id = a.doctor_id
+          WHERE d.user_id = $1
+            AND a.patient_id = $2
+          LIMIT 1
+        `,
+        [req.user.id, patient.user_id]
+      );
+
+      if (relationshipResult.rows.length === 0) {
+        return res.status(403).json({ error: 'Forbidden' });
+      }
+    }
+
     const historyResult = await pool.query(
       'SELECT * FROM medical_history WHERE patient_id = $1',
       [req.params.id]
