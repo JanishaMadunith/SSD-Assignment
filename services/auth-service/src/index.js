@@ -36,6 +36,9 @@ const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3009/auth/callback';
+// Always Google in real use. Overridable only so the automated tests can point
+// the real endpoint at a local stand-in provider instead of calling Google.
+const GOOGLE_ISSUER_URL = process.env.GOOGLE_ISSUER_URL || 'https://accounts.google.com';
 
 let googleClient = null;
 async function getGoogleClient() {
@@ -44,7 +47,7 @@ async function getGoogleClient() {
       throw new Error('GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be configured');
     }
     const { Issuer } = require('openid-client');
-    const googleIssuer = await Issuer.discover('https://accounts.google.com');
+    const googleIssuer = await Issuer.discover(GOOGLE_ISSUER_URL);
     googleClient = new googleIssuer.Client({
       client_id: GOOGLE_CLIENT_ID,
       client_secret: GOOGLE_CLIENT_SECRET,
