@@ -1,0 +1,25 @@
+=== BEFORE: V13 - No Rate Limiting on Authentication & No Account Lockout ===
+
+Vulnerability:
+The authentication service login (`POST /api/auth/login`) and registration (`POST /api/auth/register`)
+endpoints had no rate limiting or lockout controls. An attacker could perform unlimited brute-force
+or credential stuffing attacks against user accounts without restriction.
+
+Vulnerable Implementation:
+  // services/auth-service/src/index.js (Before)
+  app.post('/api/auth/login', async (req, res) => {
+    // No rate limiter middleware
+    // No account lockout checks
+    const { email, password } = req.body;
+    const result = await pool.query('SELECT ... FROM users WHERE email = $1', [email]);
+    ...
+    const isValid = await bcrypt.compare(password, user.password_hash);
+    if (!isValid) {
+      return res.status(401).json({ message: 'invalid credentials' });
+    }
+  });
+
+Attack Demonstration:
+  - Sent 50+ rapid consecutive login requests to /api/auth/login with password guesses.
+  - All 50 requests were processed without rate-limiting (status 401 on every attempt).
+  - Target account remained unlocked indefinitely, allowing unlimited brute-force attempts.

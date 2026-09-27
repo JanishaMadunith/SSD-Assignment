@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const rateLimit = require('express-rate-limit');
 const { Pool } = require('pg');
 require('dotenv').config();
 
@@ -17,6 +18,18 @@ app.use(cors({ origin: allowedOrigins, credentials: false }));
 const PORT = Number(process.env.PORT || 3000);
 const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
+
+// V13: Rate limiter on authentication routes (10 attempts per 15 min per IP)
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many authentication attempts, please try again later' },
+});
+
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 
 if (!JWT_SECRET) {
   throw new Error('JWT_SECRET is required in environment variables');
@@ -117,6 +130,9 @@ async function ensureSchema() {
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_by INTEGER;");
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();");
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();");
+  // V13: Account lockout columns
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER NOT NULL DEFAULT 0;");
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMPTZ;");
 
   await pool.query(`
     DO $$
@@ -153,7 +169,7 @@ app.get('/health', (req, res) => {
 });
 
 // Register
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', authLimiter, async (req, res) => {
   try {
     const { email, password, role = 'patient', full_name } = req.body;
 
@@ -199,7 +215,7 @@ app.post('/api/auth/register', async (req, res) => {
 });
 
 // Login
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
 
@@ -208,19 +224,50 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const result = await pool.query(
-      'SELECT id, email, password_hash, role, status FROM users WHERE email = $1',
+      'SELECT id, email, password_hash, role, status, failed_login_attempts, locked_until FROM users WHERE email = $1',
       [email.toLowerCase()]
     );
 
     if (result.rows.length === 0) {
+      // Mitigate timing differences for non-existent users
+      await bcrypt.compare(password, '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy');
       return res.status(401).json({ message: 'invalid credentials' });
     }
 
     const user = result.rows[0];
+
+    // V13: Account Lockout Check — evaluated BEFORE bcrypt.compare so timing does not reveal lock state
+    const now = new Date();
+    if (user.locked_until && new Date(user.locked_until) > now) {
+      // Identical failure message prevents account status / lock state enumeration
+      return res.status(401).json({ message: 'invalid credentials' });
+    }
+
     const isValid = await bcrypt.compare(password, user.password_hash);
 
     if (!isValid) {
+      const attempts = (user.failed_login_attempts || 0) + 1;
+      if (attempts >= MAX_FAILED_ATTEMPTS) {
+        const lockUntil = new Date(Date.now() + LOCKOUT_DURATION_MS);
+        await pool.query(
+          'UPDATE users SET failed_login_attempts = $1, locked_until = $2 WHERE id = $3',
+          [attempts, lockUntil, user.id]
+        );
+      } else {
+        await pool.query(
+          'UPDATE users SET failed_login_attempts = $1 WHERE id = $2',
+          [attempts, user.id]
+        );
+      }
       return res.status(401).json({ message: 'invalid credentials' });
+    }
+
+    // Reset failed attempts and lockout on successful login
+    if ((user.failed_login_attempts && user.failed_login_attempts > 0) || user.locked_until !== null) {
+      await pool.query(
+        'UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1',
+        [user.id]
+      );
     }
 
     // Suspended or deleted accounts must not be issued a new token.
