@@ -23,6 +23,7 @@ import { AuthProvider, useAuth, UserRole } from './context/AuthContext';
 import Layout from './components/Layout/Layout';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import AuthCallback from './pages/AuthCallback';
 import PatientDashboard from './pages/patient/Dashboard';
 import SearchDoctors from './pages/patient/SearchDoctors';
 import PatientAppointments from './pages/patient/Appointments';
@@ -397,6 +398,7 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/doctor/register" element={<DoctorApplication />} />
+          <Route path="/auth/callback" element={<AuthCallback />} />
 
           <Route element={<ProtectedRoute allowedRoles={['patient']} />}>
             <Route path="/patient/appointments/:id" element={<AppointmentSummary />} />
