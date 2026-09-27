@@ -15,7 +15,8 @@ const app = express();
 app.set('trust proxy', 1);
 
 app.use(helmet());
-app.use(cors());
+// Only the configured frontend origin(s) may call this API from a browser.
+app.use(cors({ origin: env.corsOrigins, credentials: false }));
 app.use(express.json({ limit: '2mb' }));
 
 app.use(rateLimit({

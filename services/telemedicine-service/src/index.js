@@ -7,7 +7,12 @@ const telemedicineRouter = require('./routes/telemedicine');
 
 const app = express();
 
-app.use(cors());
+// Only the configured frontend origin(s) may call this API from a browser.
+const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:3000')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+app.use(cors({ origin: allowedOrigins, credentials: false }));
 app.use(express.json());
 
 app.get('/health', (req, res) => {

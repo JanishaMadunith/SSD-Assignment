@@ -14,6 +14,10 @@ module.exports = {
   nodeEnv: process.env.NODE_ENV || 'development',
   port: toNumber(process.env.PORT, 3007),
   jwtSecret: process.env.JWT_SECRET || 'your_jwt_secret_here',
+  corsOrigins: (process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:3000')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
 
   rateLimitWindowMs: toNumber(process.env.RATE_LIMIT_WINDOW_MS, 60 * 1000),
   rateLimitMaxRequests: toNumber(process.env.RATE_LIMIT_MAX_REQUESTS, 120),

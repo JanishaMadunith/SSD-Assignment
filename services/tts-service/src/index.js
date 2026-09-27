@@ -4,7 +4,12 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 5002;
 
-app.use(cors());
+// Only the configured frontend origin(s) may call this API from a browser.
+const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:3000')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+app.use(cors({ origin: allowedOrigins, credentials: false }));
 app.use(express.json({ limit: '1mb' }));
 
 app.get('/health', (req, res) => {
