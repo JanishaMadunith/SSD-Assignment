@@ -45,6 +45,81 @@ const upload = multer({
   },
 });
 
+// file_path is deliberately excluded: the on-disk location never reaches the client.
+const REPORT_COLUMNS = `
+  id, patient_id, title, description, file_name, file_type, file_size, uploaded_at
+`;
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function canReadPatientReports(user, patientUserId) {
+  if (user.role === 'admin') {
+    return true; // admins are unrestricted by design
+  }
+
+  if (user.role === 'patient') {
+    return user.id === patientUserId;
+  }
+
+  if (user.role === 'doctor') {
+    // Treatment relationship: the doctor must share an appointment with the patient.
+    const link = await pool.query(
+      `
+        SELECT 1
+        FROM appointments a
+        JOIN doctors d ON d.id = a.doctor_id
+        WHERE d.user_id = $1 AND a.patient_id = $2
+        LIMIT 1
+      `,
+      [user.id, patientUserId]
+    );
+    return link.rows.length > 0;
+  }
+
+  return false;
+}
+
+router.get('/reports/:id/file', verifyToken, requireRole('patient', 'doctor', 'admin'), async (req, res) => {
+  try {
+    if (!UUID_PATTERN.test(req.params.id)) {
+      return res.status(404).json({ error: 'Report not found' });
+    }
+
+    const reportResult = await pool.query(
+      `
+        SELECT r.file_name, r.file_path, p.user_id AS patient_user_id
+        FROM medical_reports r
+        JOIN patients p ON p.id = r.patient_id
+        WHERE r.id = $1
+      `,
+      [req.params.id]
+    );
+
+    if (reportResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Report not found' });
+    }
+
+    const report = reportResult.rows[0];
+
+    if (!(await canReadPatientReports(req.user, report.patient_user_id))) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    // Only serve files that live inside the upload directory.
+    const resolvedPath = path.resolve(report.file_path);
+    if (!resolvedPath.startsWith(uploadDir + path.sep) || !fs.existsSync(resolvedPath)) {
+      return res.status(404).json({ error: 'Report not found' });
+    }
+
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.download(resolvedPath, report.file_name);
+  } catch (error) {
+    console.error('[PatientService] GET /reports/:id/file error:', error);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
 router.get('/reports', verifyToken, requireRole('patient'), async (req, res) => {
   try {
     const patientResult = await pool.query(
@@ -60,7 +135,7 @@ router.get('/reports', verifyToken, requireRole('patient'), async (req, res) => 
 
     const reportsResult = await pool.query(
       `
-        SELECT *
+        SELECT ${REPORT_COLUMNS}
         FROM medical_reports
         WHERE patient_id = $1
         ORDER BY uploaded_at DESC
@@ -110,7 +185,7 @@ router.post('/reports', verifyToken, requireRole('patient'), upload.single('file
           file_size
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING *
+        RETURNING ${REPORT_COLUMNS}
       `,
       [
         patientId,
@@ -171,7 +246,7 @@ router.get('/:id/reports', verifyToken, requireRole('doctor', 'admin'), async (r
   try {
     const reportsResult = await pool.query(
       `
-        SELECT *
+        SELECT ${REPORT_COLUMNS}
         FROM medical_reports
         WHERE patient_id = $1
         ORDER BY uploaded_at DESC
