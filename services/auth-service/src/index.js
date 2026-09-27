@@ -36,7 +36,17 @@ const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
-const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3009/auth/callback';
+// Callback URLs Google may return to. Each must also be registered on the
+// OAuth client in Google Cloud. GOOGLE_REDIRECT_URIS (comma-separated) wins;
+// a single GOOGLE_REDIRECT_URI is still accepted.
+const GOOGLE_REDIRECT_URIS = (
+  process.env.GOOGLE_REDIRECT_URIS
+  || process.env.GOOGLE_REDIRECT_URI
+  || 'http://localhost:5173/auth/callback,http://localhost:3000/auth/callback'
+)
+  .split(',')
+  .map((uri) => uri.trim())
+  .filter(Boolean);
 // Always Google in real use. Overridable only so the automated tests can point
 // the real endpoint at a local stand-in provider instead of calling Google.
 const GOOGLE_ISSUER_URL = process.env.GOOGLE_ISSUER_URL || 'https://accounts.google.com';
@@ -52,7 +62,7 @@ async function getGoogleClient() {
     googleClient = new googleIssuer.Client({
       client_id: GOOGLE_CLIENT_ID,
       client_secret: GOOGLE_CLIENT_SECRET,
-      redirect_uris: [GOOGLE_REDIRECT_URI],
+      redirect_uris: GOOGLE_REDIRECT_URIS,
       response_types: ['code'],
     });
   }
@@ -433,8 +443,14 @@ app.post('/api/auth/google/start', async (req, res) => {
       return res.status(400).json({ message: 'a valid S256 code_challenge is required' });
     }
 
+    // The browser says which of the allowed callback URLs it is on; anything else is refused.
+    const requested = typeof req.body.redirect_uri === 'string' ? req.body.redirect_uri : GOOGLE_REDIRECT_URIS[0];
+    if (!GOOGLE_REDIRECT_URIS.includes(requested)) {
+      return res.status(400).json({ message: 'redirect_uri is not allowed' });
+    }
+
     const client = await getGoogleClient();
-    const redirectUri = GOOGLE_REDIRECT_URI;
+    const redirectUri = requested;
     const state = crypto.randomBytes(32).toString('base64url');
     const nonce = crypto.randomBytes(32).toString('base64url');
 
@@ -452,7 +468,6 @@ app.post('/api/auth/google/start', async (req, res) => {
       nonce,
       code_challenge: codeChallenge,
       code_challenge_method: 'S256',
-      access_type: 'offline',
       prompt: 'select_account',
     });
 

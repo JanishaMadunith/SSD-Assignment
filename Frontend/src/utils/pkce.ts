@@ -35,7 +35,10 @@ export async function initiateGoogleLogin() {
   const code_challenge = await generateCodeChallenge(code_verifier);
 
   try {
-    const { data } = await api.post<{ url: string; state: string }>('/auth/google/start', { code_challenge });
+    const { data } = await api.post<{ url: string; state: string }>('/auth/google/start', {
+      code_challenge,
+      redirect_uri: `${window.location.origin}/auth/callback`,
+    });
     sessionStorage.setItem('oidc_code_verifier', code_verifier);
     sessionStorage.setItem('oidc_state', data.state);
     window.location.href = data.url;

@@ -24,6 +24,7 @@ const CONTAINER = 'oidc-test-auth';
 const CLIENT_ID = 'oidc-test-client';
 const CLIENT_SECRET = 'oidc-test-secret';
 const REDIRECT_URI = 'http://localhost:5173/auth/callback';
+const ALT_REDIRECT_URI = 'http://localhost:3000/auth/callback';
 const RUN = Date.now();
 
 // ---------- local stand-in for Google ----------
@@ -154,11 +155,11 @@ function googleIdentity(label, overrides = {}) {
 }
 
 // Ask the real server to start a login; returns what it put in the Google URL.
-async function startLogin(pkce = newPkce()) {
+async function startLogin(pkce = newPkce(), redirectUri = REDIRECT_URI) {
   const res = await fetch(`${AUTH_URL}/api/auth/google/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code_challenge: pkce.challenge }),
+    body: JSON.stringify({ code_challenge: pkce.challenge, redirect_uri: redirectUri }),
   });
   assert.equal(res.status, 200, 'login start failed');
   const { url, state } = await res.json();
@@ -210,7 +211,7 @@ test.before(async () => {
     '-e', `GOOGLE_ISSUER_URL=${ISSUER}`,
     '-e', `GOOGLE_CLIENT_ID=${CLIENT_ID}`,
     '-e', `GOOGLE_CLIENT_SECRET=${CLIENT_SECRET}`,
-    '-e', `GOOGLE_REDIRECT_URI=${REDIRECT_URI}`,
+    '-e', `GOOGLE_REDIRECT_URIS=${REDIRECT_URI},${ALT_REDIRECT_URI}`,
     'auth-service',
   ], { cwd: REPO_ROOT, stdio: 'ignore' });
 
@@ -371,4 +372,34 @@ test('a Google account with an existing patient\'s email is refused, not linked'
   } finally {
     resetLink('patient1@test.com');
   }
+});
+
+// ---------- configuration ----------
+
+test('a login started from the other allowed origin returns there and succeeds', async () => {
+  const login = await startLogin(newPkce(), ALT_REDIRECT_URI);
+  assert.equal(login.redirectUri, ALT_REDIRECT_URI);
+  const code = idp.issueCode({
+    identity: googleIdentity('alt-origin'),
+    nonce: login.nonce,
+    codeChallenge: login.pkce.challenge,
+    redirectUri: login.redirectUri,
+  });
+  const { status } = await callback({ code, code_verifier: login.pkce.verifier, state: login.state });
+  assert.equal(status, 200);
+});
+
+test('a redirect_uri that is not on the allow-list is refused', async () => {
+  const res = await fetch(`${AUTH_URL}/api/auth/google/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code_challenge: newPkce().challenge, redirect_uri: 'https://evil.example/auth/callback' }),
+  });
+  assert.equal(res.status, 400);
+});
+
+test('the Google URL asks only for openid, email and profile (no offline access)', async () => {
+  const params = new URL((await startLogin()).url).searchParams;
+  assert.equal(params.get('scope'), 'openid email profile');
+  assert.equal(params.get('access_type'), null);
 });
