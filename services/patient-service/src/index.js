@@ -2,7 +2,6 @@ require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
-const path = require('path');
 const { initDB } = require('./db');
 const profileRouter = require('./routes/profile');
 const historyRouter = require('./routes/history');
@@ -14,7 +13,8 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+// Uploaded reports are not web-served; they are streamed only through the
+// authenticated, ownership-checked GET /api/patients/reports/:id/file route.
 
 app.get('/health', (req, res) => {
   res.json({
