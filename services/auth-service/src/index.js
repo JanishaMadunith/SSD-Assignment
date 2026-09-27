@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 const { validatePassword } = require('./passwordPolicy');
+const { writeAuditLog } = require('../../../shared/auditLog');
 require('dotenv').config();
 
 const app = express();
@@ -91,6 +92,19 @@ async function ensureSchema() {
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();");
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id SERIAL PRIMARY KEY,
+      action TEXT NOT NULL,
+      actor_id INTEGER,
+      actor_role TEXT,
+      ip TEXT,
+      target_id TEXT,
+      detail JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
     DO $$
     BEGIN
       IF NOT EXISTS (
@@ -131,6 +145,11 @@ app.post('/api/auth/register', async (req, res) => {
     const normalizedRole = typeof role === 'string' ? role.trim() : 'patient';
 
     if (!email || !password) {
+      await writeAuditLog(pool, {
+        action: 'login.failure',
+        ip: req.ip,
+        detail: { reason: 'missing_credentials' },
+      });
       return res.status(400).json({ message: 'email and password are required' });
     }
 
@@ -191,6 +210,11 @@ app.post('/api/auth/login', async (req, res) => {
     );
 
     if (result.rows.length === 0) {
+      await writeAuditLog(pool, {
+        action: 'login.failure',
+        ip: req.ip,
+        detail: { reason: 'invalid_credentials' },
+      });
       return res.status(401).json({ message: 'invalid credentials' });
     }
 
@@ -198,8 +222,22 @@ app.post('/api/auth/login', async (req, res) => {
     const isValid = await bcrypt.compare(password, user.password_hash);
 
     if (!isValid) {
+      await writeAuditLog(pool, {
+        action: 'login.failure',
+        ip: req.ip,
+        targetId: user.id,
+        detail: { reason: 'invalid_credentials' },
+      });
       return res.status(401).json({ message: 'invalid credentials' });
     }
+
+    await writeAuditLog(pool, {
+      action: 'login.success',
+      actorId: user.id,
+      actorRole: user.role,
+      ip: req.ip,
+      targetId: user.id,
+    });
 
     const token = jwt.sign(
       { id: user.id, email: user.email, role: user.role },
@@ -333,6 +371,15 @@ app.patch('/api/auth/admin/users/:id/role', verifyToken, requireRole('admin'), a
       return res.status(404).json({ message: 'user not found' });
     }
 
+    await writeAuditLog(pool, {
+      action: 'admin.role_change',
+      actorId: req.user.id,
+      actorRole: req.user.role,
+      ip: req.ip,
+      targetId,
+      detail: { role },
+    });
+
     return res.json(result.rows[0]);
   } catch (error) {
     console.error('admin users role update error:', error);
@@ -378,6 +425,15 @@ app.patch('/api/auth/admin/users/:id/status', verifyToken, requireRole('admin'),
       return res.status(404).json({ message: 'user not found' });
     }
 
+    await writeAuditLog(pool, {
+      action: status === 'suspended' ? 'admin.user_suspend' : 'admin.user_reactivate',
+      actorId: req.user.id,
+      actorRole: req.user.role,
+      ip: req.ip,
+      targetId,
+      detail: { status },
+    });
+
     return res.json(result.rows[0]);
   } catch (error) {
     console.error('admin users status update error:', error);
@@ -414,6 +470,14 @@ app.delete('/api/auth/admin/users/:id', verifyToken, requireRole('admin'), async
     if (result.rows.length === 0) {
       return res.status(404).json({ message: 'user not found' });
     }
+
+    await writeAuditLog(pool, {
+      action: 'admin.user_delete',
+      actorId: req.user.id,
+      actorRole: req.user.role,
+      ip: req.ip,
+      targetId,
+    });
 
     return res.json({ message: 'user soft deleted', user: result.rows[0] });
   } catch (error) {

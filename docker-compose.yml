@@ -16,7 +16,9 @@ services:
       - ai-symptom-service
 
   auth-service:
-    build: ./services/auth-service
+    build:
+      context: .
+      dockerfile: services/auth-service/Dockerfile
     env_file: ./services/auth-service/.env
     ports:
       - "3000:3000"
