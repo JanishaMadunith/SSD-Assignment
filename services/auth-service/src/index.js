@@ -7,7 +7,12 @@ require('dotenv').config();
 
 const app = express();
 app.use(express.json());
-app.use(cors());
+// Only the configured frontend origin(s) may call this API from a browser.
+const allowedOrigins = (process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:3000')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+app.use(cors({ origin: allowedOrigins, credentials: false }));
 
 const PORT = Number(process.env.PORT || 3000);
 const JWT_SECRET = process.env.JWT_SECRET;
