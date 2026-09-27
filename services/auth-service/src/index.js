@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
@@ -35,7 +36,20 @@ const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
-const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3009/auth/callback';
+// Callback URLs Google may return to. Each must also be registered on the
+// OAuth client in Google Cloud. GOOGLE_REDIRECT_URIS (comma-separated) wins;
+// a single GOOGLE_REDIRECT_URI is still accepted.
+const GOOGLE_REDIRECT_URIS = (
+  process.env.GOOGLE_REDIRECT_URIS
+  || process.env.GOOGLE_REDIRECT_URI
+  || 'http://localhost:5173/auth/callback,http://localhost:3000/auth/callback'
+)
+  .split(',')
+  .map((uri) => uri.trim())
+  .filter(Boolean);
+// Always Google in real use. Overridable only so the automated tests can point
+// the real endpoint at a local stand-in provider instead of calling Google.
+const GOOGLE_ISSUER_URL = process.env.GOOGLE_ISSUER_URL || 'https://accounts.google.com';
 
 let googleClient = null;
 async function getGoogleClient() {
@@ -44,11 +58,11 @@ async function getGoogleClient() {
       throw new Error('GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be configured');
     }
     const { Issuer } = require('openid-client');
-    const googleIssuer = await Issuer.discover('https://accounts.google.com');
+    const googleIssuer = await Issuer.discover(GOOGLE_ISSUER_URL);
     googleClient = new googleIssuer.Client({
       client_id: GOOGLE_CLIENT_ID,
       client_secret: GOOGLE_CLIENT_SECRET,
-      redirect_uris: [GOOGLE_REDIRECT_URI],
+      redirect_uris: GOOGLE_REDIRECT_URIS,
       response_types: ['code'],
     });
   }
@@ -201,6 +215,17 @@ async function ensureSchema() {
   `);
 
   // OIDC: Google Subject ID and auth provider
+  // OIDC: one row per Google login in progress. The server issues state and
+  // nonce itself and each row can be consumed once, within 10 minutes.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS oidc_login_states (
+      state TEXT PRIMARY KEY,
+      nonce TEXT NOT NULL,
+      code_challenge TEXT NOT NULL,
+      redirect_uri TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL
+    );
+  `);
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS google_sub TEXT UNIQUE;");
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT NOT NULL DEFAULT 'password';");
 
@@ -406,51 +431,88 @@ app.get('/api/auth/verify', async (req, res) => {
   return res.json({ valid: true, user: decoded });
 });
 
-// OIDC: Google OAuth URL generation with PKCE parameters
-app.get('/api/auth/google/url', (req, res) => {
-  if (!GOOGLE_CLIENT_ID) {
-    return res.status(500).json({ message: 'GOOGLE_CLIENT_ID is not configured' });
-  }
-  const { state, code_challenge, nonce } = req.query;
-  if (!state || !code_challenge) {
-    return res.status(400).json({ message: 'state and code_challenge are required query parameters' });
-  }
+const OIDC_STATE_TTL_MINUTES = 10;
+const PKCE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43}$/; // base64url SHA-256
 
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3009/auth/callback';
-  const params = new URLSearchParams({
-    client_id: GOOGLE_CLIENT_ID,
-    redirect_uri: redirectUri,
-    response_type: 'code',
-    scope: 'openid email profile',
-    state: String(state),
-    code_challenge: String(code_challenge),
-    code_challenge_method: 'S256',
-    ...(nonce ? { nonce: String(nonce) } : {}),
-    access_type: 'offline',
-    prompt: 'select_account'
-  });
+// OIDC: start a Google login. The browser sends only its PKCE code_challenge;
+// the server generates state and nonce, remembers them, and builds the URL.
+app.post('/api/auth/google/start', async (req, res) => {
+  try {
+    const codeChallenge = typeof req.body.code_challenge === 'string' ? req.body.code_challenge : '';
+    if (!PKCE_CHALLENGE_PATTERN.test(codeChallenge)) {
+      return res.status(400).json({ message: 'a valid S256 code_challenge is required' });
+    }
 
-  return res.json({
-    url: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
-  });
+    // The browser says which of the allowed callback URLs it is on; anything else is refused.
+    const requested = typeof req.body.redirect_uri === 'string' ? req.body.redirect_uri : GOOGLE_REDIRECT_URIS[0];
+    if (!GOOGLE_REDIRECT_URIS.includes(requested)) {
+      return res.status(400).json({ message: 'redirect_uri is not allowed' });
+    }
+
+    const client = await getGoogleClient();
+    const redirectUri = requested;
+    const state = crypto.randomBytes(32).toString('base64url');
+    const nonce = crypto.randomBytes(32).toString('base64url');
+
+    await pool.query('DELETE FROM oidc_login_states WHERE expires_at < NOW()');
+    await pool.query(
+      `INSERT INTO oidc_login_states (state, nonce, code_challenge, redirect_uri, expires_at)
+       VALUES ($1, $2, $3, $4, NOW() + ($5 || ' minutes')::interval)`,
+      [state, nonce, codeChallenge, redirectUri, String(OIDC_STATE_TTL_MINUTES)]
+    );
+
+    const url = client.authorizationUrl({
+      scope: 'openid email profile',
+      redirect_uri: redirectUri,
+      state,
+      nonce,
+      code_challenge: codeChallenge,
+      code_challenge_method: 'S256',
+      prompt: 'select_account',
+    });
+
+    return res.json({ url, state });
+  } catch (error) {
+    console.error('Google login start error:', error.message);
+    return res.status(500).json({ message: 'Google sign-in is not available' });
+  }
 });
 
 // OIDC: Server-side Google token exchange and platform JWT issuance
 app.post('/api/auth/google/callback', authLimiter, async (req, res) => {
   try {
-    const { code, code_verifier, state, nonce } = req.body;
+    const { code, code_verifier, state } = req.body;
     if (!code || !code_verifier || !state) {
       return res.status(400).json({ message: 'code, code_verifier, and state are required' });
     }
 
-    const redirectUri = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3009/auth/callback';
+    // 0. The state must be one this server issued, unused and unexpired. It is
+    //    consumed here, so it can never be replayed. Checked before contacting Google.
+    const stateResult = await pool.query(
+      `DELETE FROM oidc_login_states
+       WHERE state = $1 AND expires_at > NOW()
+       RETURNING nonce, code_challenge, redirect_uri`,
+      [String(state)]
+    );
+    if (stateResult.rows.length === 0) {
+      return res.status(400).json({ message: 'invalid or expired login state' });
+    }
+    const login = stateResult.rows[0];
+
+    // The verifier must belong to the login this state started (PKCE binding).
+    const challenge = crypto.createHash('sha256').update(String(code_verifier)).digest('base64url');
+    if (challenge !== login.code_challenge) {
+      return res.status(400).json({ message: 'code_verifier does not match this login' });
+    }
+
     const client = await getGoogleClient();
 
     // 1. Exchange the code SERVER-SIDE — the client secret never reaches the browser.
+    //    The nonce comes from the server's record, never from the browser.
     const tokenSet = await client.callback(
-      redirectUri,
+      login.redirect_uri,
       { code, state },
-      { code_verifier, nonce, state }
+      { code_verifier, nonce: login.nonce, state }
     );
 
     const claims = tokenSet.claims();
@@ -476,12 +538,11 @@ app.post('/api/auth/google/callback', authLimiter, async (req, res) => {
       );
 
       if (emailResult.rows.length > 0) {
-        // Link google_sub to existing account
-        user = emailResult.rows[0];
-        await pool.query(
-          "UPDATE users SET google_sub = $1, auth_provider = 'both' WHERE id = $2",
-          [claims.sub, user.id]
-        );
+        // Never link by email: an email address alone does not prove ownership
+        // of an existing account (it could be an admin's). Match on sub only.
+        return res.status(409).json({
+          message: 'An account with this email already exists. Sign in with your email and password.',
+        });
       } else {
         // Create new patient (strictly 'patient', never 'admin' - preserves V01)
         const createResult = await pool.query(

@@ -42,7 +42,6 @@ export default function AuthCallback() {
 
       const savedState = sessionStorage.getItem('oidc_state');
       const codeVerifier = sessionStorage.getItem('oidc_code_verifier');
-      const nonce = sessionStorage.getItem('oidc_nonce') || undefined;
 
       // CSRF check: verify state parameter matches sessionStorage
       if (!savedState || savedState !== state) {
@@ -50,7 +49,6 @@ export default function AuthCallback() {
         toast.error('Security verification failed');
         sessionStorage.removeItem('oidc_state');
         sessionStorage.removeItem('oidc_code_verifier');
-        sessionStorage.removeItem('oidc_nonce');
         setTimeout(() => navigate('/login', { replace: true }), 3000);
         return;
       }
@@ -66,14 +64,12 @@ export default function AuthCallback() {
         const user = await handleGoogleCallback({
           code,
           code_verifier: codeVerifier,
-          state,
-          nonce
+          state
         });
 
         // Clean up sessionStorage after successful exchange
         sessionStorage.removeItem('oidc_state');
         sessionStorage.removeItem('oidc_code_verifier');
-        sessionStorage.removeItem('oidc_nonce');
 
         toast.success(`Welcome, ${user.full_name || user.email}!`);
         const targetRoute = roleHome[user.role] || '/patient';
@@ -84,7 +80,6 @@ export default function AuthCallback() {
         toast.error(errMsg);
         sessionStorage.removeItem('oidc_state');
         sessionStorage.removeItem('oidc_code_verifier');
-        sessionStorage.removeItem('oidc_nonce');
         setTimeout(() => navigate('/login', { replace: true }), 3000);
       }
     }
