@@ -459,6 +459,21 @@ app.delete('/api/auth/admin/users/:id', verifyToken, requireRole('admin'), async
   }
 });
 
+// Deliberate 4xx messages are returned to the client; internal errors never are.
+// Without this, Express's default handler sends the stack trace.
+app.use((err, req, res, next) => {
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ message: 'malformed JSON body' });
+  }
+
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ message: 'request body too large' });
+  }
+
+  console.error('unhandled error:', err);
+  return res.status(500).json({ message: 'internal server error' });
+});
+
 async function startServer() {
   try {
     await ensureSchema();
