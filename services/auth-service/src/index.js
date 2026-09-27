@@ -3,6 +3,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
+const { validatePassword } = require('./passwordPolicy');
 require('dotenv').config();
 
 const app = express();
@@ -133,8 +134,9 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ message: 'email and password are required' });
     }
 
-    if (password.length < 8) {
-      return res.status(400).json({ message: 'password must be at least 8 characters' });
+    const passwordProblem = validatePassword(password);
+    if (passwordProblem) {
+      return res.status(400).json({ message: passwordProblem });
     }
 
     if (!selfRegisterRoles.has(normalizedRole)) {
