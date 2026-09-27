@@ -340,3 +340,35 @@ test('the code_verifier must belong to the login the state started', async () =>
   assert.equal(status, 400);
   assert.equal(idp.tokenCalls, calls, 'the provider must not be contacted for a mismatched verifier');
 });
+
+// ---------- account linking ----------
+
+function resetLink(email) {
+  psql(`UPDATE users SET google_sub = NULL, auth_provider = 'password' WHERE email = '${email}'`);
+}
+
+test('a Google account with an existing admin\'s email does not get into that account', async () => {
+  resetLink('admin@test.com');
+  try {
+    const identity = googleIdentity('admin-takeover', { email: 'admin@test.com' });
+    const { status, body } = await callback(await signInWithGoogle(identity));
+    assert.equal(status, 409);
+    assert.equal(body.token, undefined, 'no token may be issued');
+    assert.equal(psql("SELECT coalesce(google_sub, 'none') FROM users WHERE email = 'admin@test.com'"), 'none',
+      'the admin account must not be linked to the Google identity');
+  } finally {
+    resetLink('admin@test.com');
+  }
+});
+
+test('a Google account with an existing patient\'s email is refused, not linked', async () => {
+  resetLink('patient1@test.com');
+  try {
+    const identity = googleIdentity('patient-link', { email: 'patient1@test.com' });
+    const { status, body } = await callback(await signInWithGoogle(identity));
+    assert.equal(status, 409);
+    assert.match(body.message || '', /email and password/i);
+  } finally {
+    resetLink('patient1@test.com');
+  }
+});

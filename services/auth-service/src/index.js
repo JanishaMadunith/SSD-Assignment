@@ -523,12 +523,11 @@ app.post('/api/auth/google/callback', authLimiter, async (req, res) => {
       );
 
       if (emailResult.rows.length > 0) {
-        // Link google_sub to existing account
-        user = emailResult.rows[0];
-        await pool.query(
-          "UPDATE users SET google_sub = $1, auth_provider = 'both' WHERE id = $2",
-          [claims.sub, user.id]
-        );
+        // Never link by email: an email address alone does not prove ownership
+        // of an existing account (it could be an admin's). Match on sub only.
+        return res.status(409).json({
+          message: 'An account with this email already exists. Sign in with your email and password.',
+        });
       } else {
         // Create new patient (strictly 'patient', never 'admin' - preserves V01)
         const createResult = await pool.query(
