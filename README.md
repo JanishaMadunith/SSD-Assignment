@@ -38,3 +38,19 @@ The AI symptom service runs on port `3007` and is available behind gateway route
 - `POST /api/ai-symptom/recommendations/analyze`
 
 All non-health endpoints require a valid Bearer JWT token.
+
+## Secret handling
+
+Real credentials must be injected through the deployment environment or a host/container secret store. Do not commit or
+publish service `.env` files, JWT secrets, database passwords, Stripe keys, Brevo keys, or LiveKit secrets.
+
+The tracked `.env.example` file contains placeholders only. Before publishing the repository, verify that no environment
+file exists in Git history:
+
+```bash
+git ls-files '*\.env' '*\.env.*'
+git log --all -- '*/.env' '.env'
+```
+
+Rotate any credential that has been exposed on a workstation, and record only the credential name and rotation date in
+the security report. Never put the credential value in source code, screenshots, commits, or logs.
