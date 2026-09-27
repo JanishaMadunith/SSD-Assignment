@@ -3,6 +3,8 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { startConsumer, closeRabbit } = require('./rabbitmq');
+const { sendEmail } = require('./notifications');
+const { verifyToken, requireRole } = require('../../shared/middleware/auth');
 
 const app = express();
 
@@ -20,6 +22,37 @@ app.get('/health', (req, res) => {
     service: 'notification-service',
     timestamp: new Date().toISOString(),
   });
+});
+
+// V07 Fix: Require admin authentication for test email endpoint
+app.post('/api/notifications/test/email', verifyToken, requireRole('admin'), async (req, res) => {
+  try {
+    const { toEmail, subject, body } = req.body;
+    if (!toEmail || !subject || !body) {
+      return res.status(400).json({ error: 'toEmail, subject, and body are required' });
+    }
+
+    await sendEmail(toEmail, subject, body);
+    return res.json({ success: true, message: 'Test email processed' });
+  } catch (error) {
+    console.error('[NotificationService] POST /test/email error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.post('/test/email', verifyToken, requireRole('admin'), async (req, res) => {
+  try {
+    const { toEmail, subject, body } = req.body;
+    if (!toEmail || !subject || !body) {
+      return res.status(400).json({ error: 'toEmail, subject, and body are required' });
+    }
+
+    await sendEmail(toEmail, subject, body);
+    return res.json({ success: true, message: 'Test email processed' });
+  } catch (error) {
+    console.error('[NotificationService] POST /test/email error:', error);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // Deliberate 4xx messages are returned to the client; internal errors never are.
