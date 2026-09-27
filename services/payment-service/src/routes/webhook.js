@@ -14,17 +14,15 @@ router.post('/', async (req, res) => {
     const signature = req.headers['stripe-signature'];
     const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
-    let event;
-
-    if (webhookSecret) {
-      if (!signature) {
-        return res.status(400).send('Missing Stripe signature');
-      }
-
-      event = stripe.webhooks.constructEvent(req.body, signature, webhookSecret);
-    } else {
-      event = JSON.parse(req.body.toString('utf8'));
+    if (!webhookSecret) {
+      return res.status(500).send('Webhook secret not configured');
     }
+
+    if (!signature) {
+      return res.status(400).send('Missing Stripe signature');
+    }
+
+    const event = stripe.webhooks.constructEvent(req.body, signature, webhookSecret);
 
     if (event.type === 'payment_intent.succeeded') {
       const paymentIntent = event.data.object;
