@@ -10,15 +10,15 @@ const router = express.Router();
 const uploadDir = path.join(__dirname, '../../uploads');
 fs.mkdirSync(uploadDir, { recursive: true });
 
+const crypto = require('crypto');
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
-    cb(
-      null,
-      `${Date.now()}-${Math.round(Math.random() * 1e9)}-${file.originalname}`
-    );
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `${Date.now()}-${crypto.randomUUID()}${ext}`);
   },
 });
 
@@ -30,7 +30,10 @@ const fileFilter = (req, file, cb) => {
     'image/jpg',
   ];
 
-  if (!allowedTypes.includes(file.mimetype)) {
+  const allowedExts = ['.pdf', '.jpg', '.jpeg', '.png'];
+  const ext = path.extname(file.originalname).toLowerCase();
+
+  if (!allowedTypes.includes(file.mimetype) || !allowedExts.includes(ext)) {
     const error = new Error('Only PDF, JPG, and PNG files are allowed');
     error.statusCode = 400; // a validation error, safe to show the client
     return cb(error);
