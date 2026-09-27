@@ -153,13 +153,41 @@ function googleIdentity(label, overrides = {}) {
   };
 }
 
+// Ask the real server to start a login; returns what it put in the Google URL.
+async function startLogin(pkce = newPkce()) {
+  const res = await fetch(`${AUTH_URL}/api/auth/google/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code_challenge: pkce.challenge }),
+  });
+  assert.equal(res.status, 200, 'login start failed');
+  const { url, state } = await res.json();
+  const params = new URL(url).searchParams;
+  return { pkce, state, url, nonce: params.get('nonce'), redirectUri: params.get('redirect_uri') };
+}
+
 // The browser half of the flow: start a login, "pick an account" at Google, get the callback payload.
 async function signInWithGoogle(identity) {
-  const pkce = newPkce();
-  const state = crypto.randomBytes(16).toString('base64url');
-  const nonce = crypto.randomBytes(16).toString('base64url');
-  const code = idp.issueCode({ identity, nonce, codeChallenge: pkce.challenge });
-  return { code, code_verifier: pkce.verifier, state, nonce };
+  const login = await startLogin();
+  const code = idp.issueCode({
+    identity,
+    nonce: login.nonce,
+    codeChallenge: login.pkce.challenge,
+    redirectUri: login.redirectUri,
+  });
+  return { code, code_verifier: login.pkce.verifier, state: login.state };
+}
+
+// The auth routes allow 10 attempts per 15 minutes; restart the test instance to start fresh.
+async function resetRateLimit() {
+  execFileSync('docker', ['restart', CONTAINER], { cwd: REPO_ROOT, stdio: 'ignore' });
+  for (let i = 0; i < 60; i += 1) {
+    try {
+      if ((await fetch(`${AUTH_URL}/health`)).ok) return;
+    } catch (_) { /* restarting */ }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  throw new Error('test auth-service did not come back');
 }
 
 async function callback(payload) {
@@ -249,4 +277,66 @@ test('a wrong PKCE code_verifier is rejected with 400', async () => {
   const payload = await signInWithGoogle(googleIdentity('pkce'));
   payload.code_verifier = newPkce().verifier;
   assert.equal((await callback(payload)).status, 400);
+});
+
+// ---------- server-side state and nonce ----------
+
+test('the server issues state and nonce itself and puts them in the Google URL', async () => {
+  await resetRateLimit();
+  const login = await startLogin();
+  assert.match(login.state, /^[A-Za-z0-9_-]{43}$/);
+  assert.match(login.nonce, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(new URL(login.url).searchParams.get('state'), login.state);
+  assert.equal(new URL(login.url).searchParams.get('code_challenge_method'), 'S256');
+});
+
+test('a state the server never issued is refused before any token exchange', async () => {
+  const payload = await signInWithGoogle(googleIdentity('forged-state'));
+  payload.state = 'attacker-chosen-state';
+  const calls = idp.tokenCalls;
+  const { status } = await callback(payload);
+  assert.equal(status, 400);
+  assert.equal(idp.tokenCalls, calls, 'the provider must not be contacted for a forged state');
+});
+
+test('a state can only be used once', async () => {
+  const first = await signInWithGoogle(googleIdentity('state-replay'));
+  assert.equal((await callback(first)).status, 200);
+
+  const second = await signInWithGoogle(googleIdentity('state-replay'));
+  second.state = first.state;
+  assert.equal((await callback(second)).status, 400);
+});
+
+test('an expired state is refused', async () => {
+  const payload = await signInWithGoogle(googleIdentity('expired-state'));
+  psql(`UPDATE oidc_login_states SET expires_at = NOW() - interval '1 minute' WHERE state = '${payload.state}'`);
+  assert.equal((await callback(payload)).status, 400);
+});
+
+test('the nonce is fixed by the server: an ID token with another nonce is refused', async () => {
+  const login = await startLogin();
+  const code = idp.issueCode({
+    identity: googleIdentity('nonce'),
+    nonce: 'attacker-nonce',
+    codeChallenge: login.pkce.challenge,
+    redirectUri: login.redirectUri,
+  });
+  const { status } = await callback({ code, code_verifier: login.pkce.verifier, state: login.state, nonce: 'attacker-nonce' });
+  assert.equal(status, 400);
+});
+
+test('the code_verifier must belong to the login the state started', async () => {
+  const victimLogin = await startLogin();
+  const attacker = newPkce();
+  const code = idp.issueCode({
+    identity: googleIdentity('verifier-binding'),
+    nonce: victimLogin.nonce,
+    codeChallenge: attacker.challenge,
+    redirectUri: victimLogin.redirectUri,
+  });
+  const calls = idp.tokenCalls;
+  const { status } = await callback({ code, code_verifier: attacker.verifier, state: victimLogin.state });
+  assert.equal(status, 400);
+  assert.equal(idp.tokenCalls, calls, 'the provider must not be contacted for a mismatched verifier');
 });

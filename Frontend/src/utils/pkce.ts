@@ -1,4 +1,6 @@
 // Web Crypto API PKCE helper according to RFC 7636 and OpenID Connect specifications
+import toast from 'react-hot-toast';
+import api from '../services/api';
 
 function base64UrlEncode(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -26,31 +28,18 @@ export async function generateCodeChallenge(verifier: string): Promise<string> {
   return base64UrlEncode(digest);
 }
 
-export async function initiateGoogleLogin(clientId?: string, redirectUri?: string) {
+// Starts a Google login. The browser keeps only the PKCE verifier; the server
+// issues state and nonce, records them, and returns the Google URL.
+export async function initiateGoogleLogin() {
   const code_verifier = generateRandomString(64);
   const code_challenge = await generateCodeChallenge(code_verifier);
-  const state = generateRandomString(32);
-  const nonce = generateRandomString(32);
 
-  sessionStorage.setItem('oidc_code_verifier', code_verifier);
-  sessionStorage.setItem('oidc_state', state);
-  sessionStorage.setItem('oidc_nonce', nonce);
-
-  const googleClientId = clientId || process.env.REACT_APP_GOOGLE_CLIENT_ID;
-  const targetRedirectUri = redirectUri || `${window.location.origin}/auth/callback`;
-
-  const params = new URLSearchParams({
-    client_id: googleClientId || '',
-    redirect_uri: targetRedirectUri,
-    response_type: 'code',
-    scope: 'openid email profile',
-    state,
-    nonce,
-    code_challenge,
-    code_challenge_method: 'S256',
-    prompt: 'select_account',
-    access_type: 'offline'
-  });
-
-  window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+  try {
+    const { data } = await api.post<{ url: string; state: string }>('/auth/google/start', { code_challenge });
+    sessionStorage.setItem('oidc_code_verifier', code_verifier);
+    sessionStorage.setItem('oidc_state', data.state);
+    window.location.href = data.url;
+  } catch (_error) {
+    toast.error('Google sign-in is not available right now');
+  }
 }
