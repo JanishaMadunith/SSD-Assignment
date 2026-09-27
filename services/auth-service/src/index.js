@@ -54,7 +54,8 @@ async function verifyToken(req, res, next) {
 
   let decoded;
   try {
-    decoded = jwt.verify(token, JWT_SECRET);
+    // V11: Pin algorithm to HS256 to prevent algorithm confusion attacks
+    decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
   } catch (_error) {
     return res.status(403).json({ message: 'Invalid token' });
   }
@@ -183,7 +184,7 @@ app.post('/api/auth/register', async (req, res) => {
     const token = jwt.sign(
       { id: user.id, email: user.email, role: user.role },
       JWT_SECRET,
-      { expiresIn: JWT_EXPIRES_IN }
+      { algorithm: 'HS256', expiresIn: JWT_EXPIRES_IN }
     );
 
     res.status(201).json({
@@ -230,7 +231,7 @@ app.post('/api/auth/login', async (req, res) => {
     const token = jwt.sign(
       { id: user.id, email: user.email, role: user.role },
       JWT_SECRET,
-      { expiresIn: JWT_EXPIRES_IN }
+      { algorithm: 'HS256', expiresIn: JWT_EXPIRES_IN }
     );
 
     res.json({
@@ -254,7 +255,8 @@ app.get('/api/auth/verify', async (req, res) => {
 
   let decoded;
   try {
-    decoded = jwt.verify(token, JWT_SECRET);
+    // V11: Pin algorithm to HS256 to prevent algorithm confusion attacks
+    decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
   } catch (error) {
     return res.status(401).json({ valid: false, message: 'invalid token' });
   }

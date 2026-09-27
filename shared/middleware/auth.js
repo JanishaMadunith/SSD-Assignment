@@ -39,7 +39,8 @@ async function verifyToken(req, res, next) {
 
   let decoded;
   try {
-    decoded = jwt.verify(token, process.env.JWT_SECRET);
+    // V11: Pin algorithm to HS256 to prevent algorithm confusion attacks
+    decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
   } catch (err) {
     return res.status(403).json({ message: 'Invalid token' });
   }

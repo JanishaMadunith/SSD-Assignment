@@ -1,0 +1,28 @@
+=== BEFORE: V11 - JWT Verification Without Algorithm Pinning ===
+
+Vulnerable Pattern:
+jwt.verify was called across all services without the `algorithms` option:
+
+  // shared/middleware/auth.js
+  decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+  // services/auth-service/src/index.js
+  decoded = jwt.verify(token, JWT_SECRET);
+
+  // services/ai-symptom-service/src/middleware/auth.js
+  decoded = jwt.verify(token, env.jwtSecret);
+
+Exploit Test (Testing alg: none attack):
+Crafted an unsigned JWT with header `{"alg":"none","typ":"JWT"}`:
+  eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJpZCI6MSwicm9sZSI6ImFkbWluIn0.
+
+Result:
+  jsonwebtoken@9 automatically rejected the `alg: none` token by default
+  (throws JsonWebTokenError: jwt signature is required).
+
+Reasoning & Hardening Requirement:
+  Even though jsonwebtoken@9 rejects `alg: none` by default for symmetric keys,
+  not specifying `algorithms: ['HS256']` leaves the verification vulnerable to
+  algorithm confusion attacks (e.g., token signed with HS384/HS512 or asymmetric key
+  confusion in future library/infrastructure changes).
+  Explicit algorithm pinning is a critical defense-in-depth measure (CWE-347).
