@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const { verifyToken, requireRole } = require('../../../../shared/middleware/auth');
+const { writeAuditLog } = require('../../../../shared/auditLog');
 const { pool } = require('../db');
 
 const validStatuses = new Set(['pending', 'approved', 'rejected']);
@@ -102,6 +103,15 @@ router.patch('/admin/:id/verification', async (req, res) => {
       return res.status(404).json({ error: 'Doctor not found' });
     }
 
+    await writeAuditLog(pool, {
+      action: 'admin.doctor_verification',
+      actorId: req.user.id,
+      actorRole: req.user.role,
+      ip: req.ip,
+      targetId: doctorId,
+      detail: { status },
+    });
+
     return res.json(result.rows[0]);
   } catch (error) {
     console.error('[DoctorService] PATCH /admin/:id/verification error:', error);
@@ -137,6 +147,15 @@ router.patch('/admin/:id/documents', async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Doctor not found' });
     }
+
+    await writeAuditLog(pool, {
+      action: 'admin.doctor_documents',
+      actorId: req.user.id,
+      actorRole: req.user.role,
+      ip: req.ip,
+      targetId: doctorId,
+      detail: { document_count: documents.length },
+    });
 
     return res.json(result.rows[0]);
   } catch (error) {

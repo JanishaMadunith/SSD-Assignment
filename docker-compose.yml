@@ -16,7 +16,9 @@ services:
       - ai-symptom-service
 
   auth-service:
-    build: ./services/auth-service
+    build:
+      context: .
+      dockerfile: services/auth-service/Dockerfile
     env_file: ./services/auth-service/.env
     expose:
       - "3000"
@@ -153,6 +155,7 @@ services:
 
   livekit:
     image: livekit/livekit-server:latest
+    command: --dev
     expose:
       - "7880"
       - "7881"

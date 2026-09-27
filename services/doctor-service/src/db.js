@@ -41,6 +41,18 @@ async function initDB() {
     await pool.query('ALTER TABLE doctors ADD COLUMN IF NOT EXISTS bio TEXT;');
     await pool.query('CREATE UNIQUE INDEX IF NOT EXISTS doctors_user_id_key ON doctors(user_id);');
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS audit_log (
+        id SERIAL PRIMARY KEY,
+        action TEXT NOT NULL,
+        actor_id INTEGER,
+        actor_role TEXT,
+        ip TEXT,
+        target_id TEXT,
+        detail JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await pool.query(`
       DO $$
       BEGIN
         IF NOT EXISTS (
