@@ -1,7 +1,33 @@
+const multer = require('multer');
+const path = require('path');
+const crypto = require('crypto');
 const { verifyToken, requireRole } = require('../../../../shared/middleware/auth');
 const { pool } = require('../db');
 
 const router = require('express').Router();
+
+const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'];
+const allowedExts = ['.pdf', '.jpg', '.jpeg', '.png'];
+
+const doctorUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, path.join(__dirname, '../../uploads')),
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      cb(null, `${Date.now()}-${crypto.randomUUID()}${ext}`);
+    }
+  }),
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (!allowedTypes.includes(file.mimetype) || !allowedExts.includes(ext)) {
+      const error = new Error('Only PDF, JPG, and PNG files are allowed');
+      error.statusCode = 400;
+      return cb(error);
+    }
+    cb(null, true);
+  },
+  limits: { fileSize: 10 * 1024 * 1024 }
+});
 
 // Apply auth middleware to all routes
 router.use(verifyToken);
