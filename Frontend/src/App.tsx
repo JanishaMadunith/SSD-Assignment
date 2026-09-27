@@ -20,6 +20,7 @@ import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router-dom
 import { Link } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth, UserRole } from './context/AuthContext';
+import { initiateGoogleLogin } from './utils/pkce';
 import Layout from './components/Layout/Layout';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -281,7 +282,7 @@ function LandingPage() {
                 {React.createElement(FaApple as any, { className: 'h-5 w-5' })}
                 Continue with Apple
               </button>
-              <button className="signin-social-btn" type="button">
+              <button className="signin-social-btn" type="button" onClick={() => initiateGoogleLogin()}>
                 {React.createElement(FcGoogle as any, { className: 'h-5 w-5' })}
                 Continue with Google
               </button>
