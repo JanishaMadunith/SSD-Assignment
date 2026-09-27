@@ -54,7 +54,8 @@ async function verifyToken(req, res, next) {
 
   let decoded;
   try {
-    decoded = jwt.verify(token, JWT_SECRET);
+    // V11: pin to HS256 — reject any token whose header claims a different algorithm
+    decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
   } catch (_error) {
     return res.status(403).json({ message: 'Invalid token' });
   }
@@ -254,7 +255,8 @@ app.get('/api/auth/verify', async (req, res) => {
 
   let decoded;
   try {
-    decoded = jwt.verify(token, JWT_SECRET);
+    // V11: pin to HS256 — reject any token whose header claims a different algorithm
+    decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
   } catch (error) {
     return res.status(401).json({ valid: false, message: 'invalid token' });
   }

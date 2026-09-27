@@ -1,0 +1,28 @@
+=== AFTER: V11 - JWT Algorithm Pinned to HS256 ===
+
+All three jwt.verify() calls now carry { algorithms: ['HS256'] }:
+
+  shared/middleware/auth.js:43
+    jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] })
+
+  auth-service/src/index.js:58
+    jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] })
+
+  auth-service/src/index.js:259
+    jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] })
+
+  ai-symptom-service/src/middleware/auth.js:18
+    jwt.verify(token, env.jwtSecret, { algorithms: ['HS256'] })
+
+Test results (node --test tests/jwt-algorithm-pinning.test.js):
+  ✔ alg:none token is rejected even without algorithms option (jsonwebtoken@9 default)
+  ✔ alg:none token is rejected WITH algorithms pinned to HS256 (after fix)
+  ✔ valid HS256 token is accepted with algorithms pinned to HS256
+  ✔ token claiming RS256 algorithm is rejected when only HS256 is pinned
+  ✔ all jwt.verify calls carry the algorithms option
+  pass 5 / fail 0
+
+Verification:
+  ✓ alg:none rejected before and after (hardening documented)
+  ✓ Normal HS256 login flow still works
+  ✓ All three verifiers carry the option — no location missed

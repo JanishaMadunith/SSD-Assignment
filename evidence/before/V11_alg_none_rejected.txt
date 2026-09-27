@@ -1,0 +1,26 @@
+=== BEFORE: V11 - JWT Algorithm Not Pinned ===
+
+Exploit attempt: crafted a forged alg:none token and sent it to jwt.verify()
+WITHOUT the { algorithms } option (current vulnerable code).
+
+Token crafted:
+  Header:  { alg: "none", typ: "JWT" }
+  Payload: { id: 1, role: "admin" }
+  Signature: (empty — no signature)
+
+Result (current code — no algorithms option):
+  REJECTED: jwt signature is required
+
+Conclusion: jsonwebtoken@9 already rejects alg:none with a symmetric key.
+This is HARDENING not a live bypass — the library happens to protect us now,
+but there is no explicit contract enforcing it. Pinning { algorithms: ['HS256'] }
+makes that contract explicit and guards against future library changes or
+algorithm-confusion attacks if key material ever changes.
+
+Vulnerable locations (no algorithms option):
+  shared/middleware/auth.js:42    jwt.verify(token, process.env.JWT_SECRET)
+  auth-service/src/index.js:57   jwt.verify(token, JWT_SECRET)
+  auth-service/src/index.js:257  jwt.verify(token, JWT_SECRET)
+  ai-symptom-service/src/middleware/auth.js:17  jwt.verify(token, env.jwtSecret)
+
+OWASP: A02:2021 Cryptographic Failures / CWE-347
