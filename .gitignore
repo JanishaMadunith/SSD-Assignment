@@ -7,3 +7,12 @@ build/
 docs/
 .claude/
 CLAUDE.md
+vulnerability_report.html
+audit_report.json
+npm_audit_report.json
+urls.txt
+zap.yaml
+Evidences/
+evidences/
+
+
