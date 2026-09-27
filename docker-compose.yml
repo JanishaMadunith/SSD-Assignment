@@ -153,6 +153,7 @@ services:
 
   livekit:
     image: livekit/livekit-server:latest
+    command: --dev
     ports:
       - "7880:7880"   # WebSocket for WebRTC
       - "7881:7881"   # HTTP API
