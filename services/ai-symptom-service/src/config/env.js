@@ -10,10 +10,20 @@ function toBoolean(value, fallback) {
   return String(value).toLowerCase() === 'true';
 }
 
+// V04: JWT_SECRET must be supplied via the environment — no hardcoded fallback.
+// A missing secret means an operator error; the service must refuse to start
+// rather than silently accept tokens signed with a public placeholder.
+if (!process.env.JWT_SECRET) {
+  throw new Error(
+    '[ai-symptom-service] JWT_SECRET is required. ' +
+    'Generate one with: openssl rand -base64 48'
+  );
+}
+
 module.exports = {
   nodeEnv: process.env.NODE_ENV || 'development',
   port: toNumber(process.env.PORT, 3007),
-  jwtSecret: process.env.JWT_SECRET || 'your_jwt_secret_here',
+  jwtSecret: process.env.JWT_SECRET,   // V04: no fallback — 48+ random bytes required
   corsOrigins: (process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:3000')
     .split(',')
     .map((origin) => origin.trim())

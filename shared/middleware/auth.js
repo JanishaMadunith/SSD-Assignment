@@ -1,6 +1,15 @@
 const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 
+// V04: Fail at module load if JWT_SECRET is absent — never silently fall through
+// to jwt.verify(token, undefined) which would reject ALL tokens with a misleading error.
+if (!process.env.JWT_SECRET) {
+  throw new Error(
+    '[shared/auth] JWT_SECRET is required. ' +
+    'Generate one with: openssl rand -base64 48'
+  );
+}
+
 // Session revocation: a valid signature is not enough, the account must still
 // be active. Every service using this middleware shares the auth database.
 let statusPool;
