@@ -26,6 +26,7 @@ const pool = new Pool({
 });
 
 const allowedRoles = new Set(['patient', 'doctor', 'admin']);
+const selfRegisterRoles = new Set(['patient', 'doctor']);
 const allowedStatuses = new Set(['active', 'suspended', 'deleted']);
 
 function verifyToken(req, res, next) {
@@ -126,6 +127,7 @@ app.get('/health', (req, res) => {
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { email, password, role = 'patient', full_name } = req.body;
+    const normalizedRole = typeof role === 'string' ? role.trim() : 'patient';
 
     if (!email || !password) {
       return res.status(400).json({ message: 'email and password are required' });
@@ -133,6 +135,10 @@ app.post('/api/auth/register', async (req, res) => {
 
     if (password.length < 8) {
       return res.status(400).json({ message: 'password must be at least 8 characters' });
+    }
+
+    if (!selfRegisterRoles.has(normalizedRole)) {
+      return res.status(400).json({ message: 'invalid role value' });
     }
 
     // Check if user exists
@@ -147,7 +153,7 @@ app.post('/api/auth/register', async (req, res) => {
     const result = await pool.query(
       `INSERT INTO users (email, password_hash, role, full_name) 
        VALUES ($1, $2, $3, $4) RETURNING id, email, role`,
-      [email.toLowerCase(), passwordHash, role, full_name || email.split('@')[0]]
+      [email.toLowerCase(), passwordHash, normalizedRole, full_name || email.split('@')[0]]
     );
 
     const user = result.rows[0];
