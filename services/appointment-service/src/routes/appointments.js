@@ -529,11 +529,14 @@ router.put('/:id/complete', verifyToken, requireRole('doctor'), async (req, res)
 
 router.post('/webhook/payment', async (req, res) => {
   try {
-    if (process.env.PAYMENT_WEBHOOK_SECRET) {
-      const providedSecret = req.headers['x-webhook-secret'];
-      if (providedSecret !== process.env.PAYMENT_WEBHOOK_SECRET) {
-        return res.status(401).json({ error: 'Unauthorized webhook' });
-      }
+    const webhookSecret = process.env.PAYMENT_WEBHOOK_SECRET;
+    if (!webhookSecret) {
+      return res.status(500).json({ error: 'Webhook secret not configured' });
+    }
+
+    const providedSecret = req.headers['x-webhook-secret'];
+    if (!providedSecret || providedSecret !== webhookSecret) {
+      return res.status(401).json({ error: 'Unauthorized webhook' });
     }
 
     const { appointment_id, payment_status } = req.body;
