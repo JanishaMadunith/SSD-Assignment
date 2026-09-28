@@ -1,5 +1,5 @@
 # Healthcare Telemedicine Platform
-SE3020 Distributed Systems – Assignment 1
+SE4030 Distributed Systems – Assignment 1
 
 ## Local Development
 
